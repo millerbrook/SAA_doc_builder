@@ -1,10 +1,14 @@
 import os
 import pandas as pd
-from docx import Document
 import re
 import shutil
 import datetime
+from docx import Document
+from docxcompose.composer import Composer  # Add this import
 import docx.shared
+import docxcompose.composer as composer
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 # Define paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -210,6 +214,113 @@ def remove_instruction_text(doc):
     
     return doc
 
+def copy_content_from_source(doc, row, content_type, data_folder, output_filename):
+    """
+    Copy content from source file while preserving footnotes using docxcompose
+    """
+    print("\n==== CONTENT COPYING WITH FOOTNOTES ====")
+    print(f"Document being created: {output_filename}")
+    print(f"Content type: {content_type}")
+    
+    # Determine which column to use based on content_type
+    source_filename = row.get(content_type)
+    
+    # If no source filename provided, nothing to copy
+    if pd.isna(source_filename) or not source_filename:
+        print(f"No {content_type} source file specified for this document")
+        return doc
+    
+    # Build full path to source file
+    source_path = os.path.join(data_folder, 'transcriptions-translations', source_filename)
+    
+    # Check if source file exists
+    if not os.path.exists(source_path):
+        print(f"WARNING: Source file not found: {source_path}")
+        return doc
+    
+    print(f"Source document: {source_path}")
+    
+    try:
+        import tempfile
+        
+        # Create temporary files
+        with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as temp_file:
+            temp_path = temp_file.name
+        
+        # Save the current document state to temp file
+        doc.save(temp_path)
+        
+        # Create another temporary file for the composed result
+        with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as result_file:
+            result_path = result_file.name
+            
+        # Remove the field we don't want
+        target_field = "Translation:" if content_type == "Translate" else "Transcription:"
+        other_field = "Transcription:" if content_type == "Translate" else "Translation:"
+        
+        paragraphs_to_delete = []
+        for i, para in enumerate(doc.paragraphs):
+            if para.text.strip().startswith(other_field):
+                paragraphs_to_delete.append(i)
+                print(f"Removing {other_field} field")
+        
+        for idx in sorted(paragraphs_to_delete, reverse=True):
+            p = doc.paragraphs[idx]._p
+            p.getparent().remove(p)
+        
+        # Make sure the target field exists
+        field_found = False
+        for para in doc.paragraphs:
+            if para.text.strip().startswith(target_field):
+                field_found = True
+                break
+                
+        if not field_found:
+            print(f"Adding {target_field} field")
+            field_para = doc.add_paragraph()
+            bold_run = field_para.add_run(f"{target_field} ")
+            bold_run.bold = True
+        
+        # Save the modified document
+        doc.save(temp_path)
+        
+        # Load the source document with docxcompose
+        master = Document(temp_path)
+        composer = Composer(master)
+        
+        # Load source document
+        source_doc = Document(source_path)
+        
+        # Append the content (this preserves footnotes)
+        composer.append(source_doc)
+        
+        # Save the composed document
+        composer.save(result_path)
+        
+        # Load the resulting document
+        result_doc = Document(result_path)
+        
+        # Clean up temporary files
+        try:
+            os.unlink(temp_path)
+            os.unlink(result_path)
+        except:
+            pass
+        
+        print(f"Successfully copied content with footnotes from {source_filename}")
+        return result_doc
+        
+    except Exception as e:
+        import traceback
+        print(f"Error copying content with footnotes: {str(e)}")
+        print(traceback.format_exc())
+        
+        # Add error message to document
+        error_para = doc.add_paragraph()
+        error_run = error_para.add_run(f"[ERROR COPYING CONTENT: {str(e)}]")
+        error_run.bold = True
+        
+        return doc
 def create_document(row, content_type):
     """Create a new document based on the template and row data"""
     # Skip if the specified column has no value
@@ -262,7 +373,28 @@ def create_document(row, content_type):
     
     # Open the document
     doc = Document(output_path)
+    
+    # Remove instruction text from the document
     doc = remove_instruction_text(doc)
+    
+    # NEW: Remove placeholder text and Document Type lines
+    paragraphs_to_delete = []
+    for i, para in enumerate(doc.paragraphs):
+        # Check for placeholder text
+        if "<copy/paste transcription here>" in para.text:
+            print(f"Found placeholder text to remove at paragraph {i}")
+            paragraphs_to_delete.append(i)
+        
+        # Check for Document Type line
+        if para.text.strip().startswith("Document Type:"):
+            print(f"Found Document Type line to remove at paragraph {i}")
+            paragraphs_to_delete.append(i)
+    
+    # Delete marked paragraphs (in reverse order to maintain indices)
+    for idx in sorted(paragraphs_to_delete, reverse=True):
+        p = doc.paragraphs[idx]._p
+        p.getparent().remove(p)
+        print(f"Removed paragraph at index {idx}")
     
     # Process the header sections
     for section_idx, section in enumerate(doc.sections):
@@ -293,15 +425,11 @@ def create_document(row, content_type):
     if not citation_found:
         print("Warning: Citation line not found in document")
     
-    # Process metadata fields (after citation handling)
+    # Process metadata fields
     doc = add_metadata_fields(doc, row, content_type)
     
-    # Add content type indication to the main document body
-    paragraph = doc.add_paragraph()
-    paragraph.add_run(f"Document Type: {content_type}").bold = True
-    
-    # REMOVED: Timestamp generation code
-    # No longer adding timestamp at the end of documents
+    # Add source content based on content type - now with proper footnote handling
+    doc = copy_content_from_source(doc, row, content_type, data_folder, os.path.basename(output_path))
     
     # Save the modified document
     doc.save(output_path)
