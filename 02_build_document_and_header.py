@@ -178,6 +178,38 @@ def add_metadata_fields(doc, row, content_type):
     
     return doc
 
+def remove_instruction_text(doc):
+    """
+    Remove the specific instruction text from the document
+    """
+    instruction_text = "<For the following PRINT fields, if they aren't available for a document, remove them."
+    
+    print("Searching for instruction text...")
+    
+    # Find paragraphs containing any part of the instruction text (more robust)
+    paragraphs_to_delete = []
+    for i, para in enumerate(doc.paragraphs):
+        # Check for the start of the instruction text to identify the paragraph
+        if instruction_text in para.text:
+            print(f"Found instruction text at paragraph {i}: '{para.text[:50]}...'")
+            paragraphs_to_delete.append(i)
+        # Also check for sections of text in case it's broken up
+        elif "<For the following PRINT fields" in para.text or "remove them. For example" in para.text:
+            print(f"Found partial instruction text at paragraph {i}: '{para.text[:50]}...'")
+            paragraphs_to_delete.append(i)
+    
+    # Delete paragraphs with instruction text (in reverse order to maintain indices)
+    if paragraphs_to_delete:
+        for idx in sorted(paragraphs_to_delete, reverse=True):
+            p = doc.paragraphs[idx]._p
+            p.getparent().remove(p)
+            print(f"Removed instruction paragraph at index {idx}")
+        print(f"Removed {len(paragraphs_to_delete)} paragraphs containing instruction text")
+    else:
+        print("No instruction text found")
+    
+    return doc
+
 def create_document(row, content_type):
     """Create a new document based on the template and row data"""
     # Skip if the specified column has no value
@@ -230,22 +262,7 @@ def create_document(row, content_type):
     
     # Open the document
     doc = Document(output_path)
-    
-    # Remove instruction text from the document
-    instruction_text = "<For the following PRINT fields, if they aren't available for a document, remove them. For example of the Receiver is unknown, remove the two receiver rows. Put the text of the item next to the prompt like the citation and copyright above. For the transcription put it below to start on a new line>"
-    
-    # Find and remove paragraphs containing the instruction text
-    paragraphs_to_delete = []
-    for i, para in enumerate(doc.paragraphs):
-        if instruction_text in para.text:
-            print(f"Found instruction text to remove at paragraph {i}")
-            paragraphs_to_delete.append(i)
-    
-    # Delete paragraphs with instruction text (in reverse order to maintain indices)
-    for idx in sorted(paragraphs_to_delete, reverse=True):
-        p = doc.paragraphs[idx]._p
-        p.getparent().remove(p)
-        print(f"Removed instruction paragraph at index {idx}")
+    doc = remove_instruction_text(doc)
     
     # Process the header sections
     for section_idx, section in enumerate(doc.sections):
