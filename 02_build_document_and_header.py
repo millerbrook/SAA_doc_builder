@@ -22,7 +22,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def format_citation_text(row, content_type):
     """
-    Format citation text based on volume and document type
+    Format citation components for use with formatted insertion
+    Returns a dictionary with different components of the citation
     """
     doc_number = str(row.get('DBL - Doc number', ''))
     date_value = str(row.get('Date', ''))
@@ -32,17 +33,6 @@ def format_citation_text(row, content_type):
     transcript_range = str(row.get('Transcript range', ''))
     translate_range = str(row.get('Translate range', ''))
     
-    # Base citation parts that don't change
-    author = 'James W. Lowry'
-    
-    if volume == 'I':
-        book_info = "Documents of Brotherly Love: Dutch Mennonite Aid to Swiss Anabaptists Volume 1, 1635-1709, edited by David J. Rempel Smucker and John L. Ruth (Millersburg, OH: Ohio Amish Library, 2007)"
-    elif volume == 'II':
-        book_info = "Documents of Brotherly Love: Dutch Mennonite Aid to Swiss Anabaptists Volume II, 1710-1711 (Millersburg, OH: Ohio Amish Library, 2015)"
-    else:
-        # Default case if volume is not recognized
-        book_info = "Documents of Brotherly Love: Dutch Mennonite Aid to Swiss Anabaptists (Millersburg, OH: Ohio Amish Library)"
-    
     # Format differs based on document type
     if content_type == 'Transcript':
         doc_type = "transcription"
@@ -51,10 +41,75 @@ def format_citation_text(row, content_type):
         doc_type = "translation"
         page_range = translate_range
     
-    # Assemble the full citation
-    citation = f'{author}, "Document {doc_number}, {date_value}, {doc_type}," in {book_info}, {page_range}.'
+    # Determine the book title and additional info based on volume
+    if volume == 'I':
+        book_title = "Documents of Brotherly Love: Dutch Mennonite Aid to Swiss Anabaptists"
+        volume_info = "Volume 1, 1635-1709"
+        editors = "edited by David J. Rempel Smucker and John L. Ruth"
+        publisher = "(Millersburg, OH: Ohio Amish Library, 2007)"
+    elif volume == 'II':
+        book_title = "Documents of Brotherly Love: Dutch Mennonite Aid to Swiss Anabaptists"
+        volume_info = "Volume II, 1710-1711"
+        editors = ""
+        publisher = "(Millersburg, OH: Ohio Amish Library, 2015)"
+    else:
+        # Default case
+        book_title = "Documents of Brotherly Love: Dutch Mennonite Aid to Swiss Anabaptists"
+        volume_info = ""
+        editors = ""
+        publisher = "(Millersburg, OH: Ohio Amish Library)"
     
-    return citation
+    # Return components separately
+    return {
+        "author": "James W. Lowry",
+        "doc_number": doc_number,
+        "date": date_value,
+        "doc_type": doc_type,
+        "book_title": book_title,
+        "volume_info": volume_info,
+        "editors": editors,
+        "publisher": publisher,
+        "page_range": page_range
+    }
+
+def add_formatted_citation(doc, citation_components):
+    """Add citation with proper formatting"""
+    for i, para in enumerate(doc.paragraphs):
+        if para.text.strip().startswith("Citation:"):
+            # Found the citation paragraph
+            print(f"Found Citation line: '{para.text}'")
+            
+            # Clear the paragraph
+            for run in para.runs:
+                run.clear()
+            
+            # Add the citation parts with appropriate formatting
+            # Part 1: "Citation: " label in bold
+            run1 = para.add_run("Citation: ")
+            run1.bold = True
+            
+            # Part 2: Author and beginning of citation
+            para.add_run(f"{citation_components['author']}, \"Document {citation_components['doc_number']}, ")
+            para.add_run(f"{citation_components['date']}, {citation_components['doc_type']},\" in ")
+            
+            # Part 3: Book title in italics
+            run_title = para.add_run(citation_components['book_title'])
+            run_title.italic = True
+            
+            # Part 4: Volume info and the rest
+            if citation_components['volume_info']:
+                para.add_run(f" {citation_components['volume_info']}")
+            
+            if citation_components['editors']:
+                para.add_run(f", {citation_components['editors']}")
+            
+            para.add_run(f" {citation_components['publisher']}, {citation_components['page_range']}.")
+            
+            print(f"Added formatted citation with italicized book title")
+            return True
+    
+    print("Warning: Citation line not found in document")
+    return False
 
 def update_digital_id_in_header(header, new_digital_id):
     """Update the Digital ID in a header, checking both paragraphs and tables"""
@@ -402,28 +457,10 @@ def create_document(row, content_type):
         update_digital_id_in_header(header, digital_id)
     
     # Generate the enhanced citation text
-    citation_text = format_citation_text(row, content_type)
+    citation_components = format_citation_text(row, content_type)
     
-    # Find and replace Citation line in the document body
-    citation_found = False
-    for para in doc.paragraphs:
-        if para.text.strip().startswith("Citation:"):
-            print(f"Found Citation line: '{para.text}'")
-            # Clear the paragraph
-            for run in para.runs:
-                run.clear()
-            
-            # Create new text with proper formatting
-            run1 = para.add_run("Citation: ")
-            run1.bold = True
-            para.add_run(citation_text)
-            
-            print(f"Replaced with Citation: {citation_text}")
-            citation_found = True
-            break
-    
-    if not citation_found:
-        print("Warning: Citation line not found in document")
+    # Add formatted citation to the document
+    add_formatted_citation(doc, citation_components)
     
     # Process metadata fields
     doc = add_metadata_fields(doc, row, content_type)
